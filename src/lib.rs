@@ -1,7 +1,7 @@
 #![no_std]
 #![feature(const_generics)]
 
-use core::{mem::MaybeUninit, ptr};
+use core::{mem::MaybeUninit, ops, ptr, slice};
 
 /// This struct is a simple wrapper around `[MaybeUninit<T>; N]`.
 ///
@@ -43,7 +43,7 @@ impl<T, const N: usize> MaybeArray<T, { N }> {
 
     /// Returns a pointer to the element at `offset`.
     /// This element *may* be uninitialized.
-    /// 
+    ///
     /// if `N` is 0, for all values of `offset`, this function returns a dangling pointer.
     #[inline(always)]
     pub fn nth_ptr(&self, offset: usize) -> *const T {
@@ -58,7 +58,7 @@ impl<T, const N: usize> MaybeArray<T, { N }> {
 
     /// Returns a mutable pointer to the element at `offset`.
     /// This element *may* be uninitialized.
-    /// 
+    ///
     /// if `N` is 0, for all values of `offset`, this function returns a dangling pointer.
     #[inline(always)]
     pub fn nth_ptr_mut(&mut self, offset: usize) -> *mut T {
@@ -73,7 +73,7 @@ impl<T, const N: usize> MaybeArray<T, { N }> {
 
     /// Returns a pointer to the first element of the array.
     /// This element *may* be uninitialized.
-    /// 
+    ///
     /// If `N` is 0, the returned pointer is dangling.
     #[inline(always)]
     pub fn first_ptr(&self) -> *const T {
@@ -82,7 +82,7 @@ impl<T, const N: usize> MaybeArray<T, { N }> {
 
     /// Returns a mutable pointer to the first element of the array.
     /// This element *may* be uninitialized.
-    /// 
+    ///
     /// If `N` is 0, the returned pointer is dangling.
     #[inline(always)]
     pub fn first_ptr_mut(&mut self) -> *mut T {
@@ -113,8 +113,8 @@ impl<T, const N: usize> MaybeArray<T, { N }> {
     /// 1) `index` is *NOT* boundschecked.
     /// 2) The element at `index` may be uninitialized, thus reading it is invalid.
     #[inline(always)]
-    pub unsafe fn read(&mut self, offset: usize) -> T {
-        ptr::read(self.nth_ptr_mut(offset))
+    pub unsafe fn read(&self, offset: usize) -> T {
+        ptr::read(self.nth_ptr(offset))
     }
 
     /// Sets the element at `index` to `value`.
@@ -139,6 +139,51 @@ impl<T, const N: usize> MaybeArray<T, { N }> {
         let array_ptr = this.array_ptr_mut();
         ptr::read(array_ptr)
     }
+
+    pub unsafe fn slice_index<R>(&self, r: R) -> &[T]
+    where
+        R: ops::RangeBounds<usize>,
+    {
+        let begin = match r.start_bound() {
+            ops::Bound::Included(&start) => start,
+            ops::Bound::Excluded(&start) => start + 1,
+            ops::Bound::Unbounded => 0,
+        };
+
+        let end = match r.end_bound() {
+            ops::Bound::Included(&end) => end + 1,
+            ops::Bound::Excluded(&end) => end,
+            ops::Bound::Unbounded => self.capacity(),
+        };
+
+        debug_assert!(begin <= end);
+        debug_assert!(end <= self.capacity());
+
+        slice::from_raw_parts(self.nth_ptr(begin), end - begin)
+    }
+
+    pub unsafe fn slice_index_mut<R>(&mut self, r: R) -> &mut [T]
+    where
+        R: ops::RangeBounds<usize>,
+    {
+        let begin = match r.start_bound() {
+            ops::Bound::Included(&start) => start,
+            ops::Bound::Excluded(&start) => start + 1,
+            ops::Bound::Unbounded => 0,
+        };
+
+        let end = match r.end_bound() {
+            ops::Bound::Included(&end) => end + 1,
+            ops::Bound::Excluded(&end) => end,
+            ops::Bound::Unbounded => self.capacity(),
+        };
+
+        debug_assert!(begin <= end);
+        debug_assert!(end <= self.capacity());
+
+        slice::from_raw_parts_mut(self.nth_ptr_mut(begin), end - begin)
+    }
+
 }
 
 #[cfg(test)]
@@ -155,9 +200,31 @@ mod tests {
         }
     }
 
+    #[test]
     fn test_zero_len() {
         let mut array = MaybeArray::<i32, { 0 }>::default();
 
         let ptr = array.first_ptr();
+        assert!(ptr as usize % core::mem::align_of::<i32>() == 0);
+    }
+
+    #[test]
+    fn test_slice_index() {
+        let mut array = MaybeArray::<i32, { 4 }>::default();
+
+        unsafe {
+            for idx in 0..4 {
+                array.write(idx, (idx as i32 + 1) * 2);
+            }
+
+            let slice = array.slice_index(2..);
+            assert_eq!(slice, &[6, 8][..]);
+
+            let slice = array.slice_index(0..=1);
+            assert_eq!(slice, &[2, 4]);
+
+            let slice = array.slice_index(1..3);
+            assert_eq!(slice, &[4, 6]);
+        }
     }
 }
