@@ -29,57 +29,61 @@ impl<T, const N: usize> Default for MaybeArray<T, { N }> {
 
 impl<T, const N: usize> MaybeArray<T, { N }> {
     /// Returns the capacity of the array.
+    #[cfg(not(miri))]
+    #[inline(always)]
     pub const fn capacity(&self) -> usize {
         N
     }
 
-    /// Creates a MaybeArray from a normal array.
-    pub fn from_array<const LEN: usize>(mut array: [T; LEN]) -> Self {
-        debug_assert!(LEN > 0);
-        let count = if LEN > N { N } else { LEN };
-
-        let mut this = Self::default();
-
-        unsafe {
-            ptr::copy_nonoverlapping(&mut array[0], this.first_ptr_mut(), count);
-        }
-
-        this
+    #[cfg(miri)]
+    #[inline(always)]
+    pub fn capacity(&self) -> usize {
+        self.array.len()
     }
 
-    /// Returns a pointer to the element at `index`.
+    /// Returns a pointer to the element at `offset`.
     /// This element *may* be uninitialized.
+    /// 
+    /// if `N` is 0, for all values of `offset`, this function returns a dangling pointer.
     #[inline(always)]
-    pub fn nth_ptr(&self, index: usize) -> *const T {
-        debug_assert!(index < N);
+    pub fn nth_ptr(&self, offset: usize) -> *const T {
+        debug_assert!(offset <= self.capacity());
 
-        unsafe {
-            let nth_element = &*(self.array.get_unchecked(index));
-            nth_element.as_ptr()
-        }
+        // Can't use `add` here, since that requires the starting and resulting pointer to be in bounds,
+        // or one byte past the end of the same allocated object.
+        //
+        // We dont know the value of `offset`, so the resulting pointer might be OOB.
+        self.array.as_ptr().wrapping_add(offset) as *const T
     }
 
-    /// Returns a mutable pointer to the element at `index`.
+    /// Returns a mutable pointer to the element at `offset`.
     /// This element *may* be uninitialized.
+    /// 
+    /// if `N` is 0, for all values of `offset`, this function returns a dangling pointer.
     #[inline(always)]
-    pub fn nth_ptr_mut(&mut self, index: usize) -> *mut T {
-        debug_assert!(index < N);
+    pub fn nth_ptr_mut(&mut self, offset: usize) -> *mut T {
+        debug_assert!(offset <= self.capacity());
 
-        unsafe {
-            let nth_element = &mut *(self.array.get_unchecked_mut(index));
-            nth_element.as_mut_ptr()
-        }
+        // Can't use `add` here, since that requires the starting and resulting pointer to be in bounds,
+        // or one byte past the end of the same allocated object.
+        //
+        // We dont know the value of `offset`, so the resulting pointer might be OOB. debug_assert!(offset <= N);
+        self.array.as_mut_ptr().wrapping_add(offset) as *mut T
     }
 
     /// Returns a pointer to the first element of the array.
     /// This element *may* be uninitialized.
+    /// 
+    /// If `N` is 0, the returned pointer is dangling.
     #[inline(always)]
-    pub fn first_ptr(&mut self) -> *const T {
+    pub fn first_ptr(&self) -> *const T {
         self.nth_ptr(0)
     }
 
     /// Returns a mutable pointer to the first element of the array.
     /// This element *may* be uninitialized.
+    /// 
+    /// If `N` is 0, the returned pointer is dangling.
     #[inline(always)]
     pub fn first_ptr_mut(&mut self) -> *mut T {
         self.nth_ptr_mut(0)
@@ -109,8 +113,8 @@ impl<T, const N: usize> MaybeArray<T, { N }> {
     /// 1) `index` is *NOT* boundschecked.
     /// 2) The element at `index` may be uninitialized, thus reading it is invalid.
     #[inline(always)]
-    pub unsafe fn take(&mut self, index: usize) -> T {
-        ptr::read(self.nth_ptr_mut(index))
+    pub unsafe fn read(&mut self, offset: usize) -> T {
+        ptr::read(self.nth_ptr_mut(offset))
     }
 
     /// Sets the element at `index` to `value`.
@@ -120,8 +124,8 @@ impl<T, const N: usize> MaybeArray<T, { N }> {
     /// # Unsafe
     /// Marked unsafe because `index` is not boundchecked.
     #[inline(always)]
-    pub unsafe fn set(&mut self, index: usize, value: T) {
-        ptr::write(self.nth_ptr_mut(index), value)
+    pub unsafe fn write(&mut self, offset: usize, value: T) {
+        ptr::write(self.nth_ptr_mut(offset), value)
     }
 
     /// Transforms `this` into an array.
@@ -141,11 +145,19 @@ impl<T, const N: usize> MaybeArray<T, { N }> {
 mod tests {
     use super::*;
 
-    // TODO: This currently fails because it expects `3usize` but finds `3usize`.
-    // Expected type `[i32; _]`
-    //    Found type `[i32; 3]`
     #[test]
-    fn maybearray_from_array() {
-        let array = MaybeArray::<i32, { 10 }>::from_array::<3usize>([1, 2, 3]);
+    fn maybearray() {
+        let mut array = MaybeArray::<i32, { 10 }>::default();
+
+        unsafe {
+            array.write(0, 10);
+            assert_eq!(*(array.first_ptr()), 10)
+        }
+    }
+
+    fn test_zero_len() {
+        let mut array = MaybeArray::<i32, { 0 }>::default();
+
+        let ptr = array.first_ptr();
     }
 }
