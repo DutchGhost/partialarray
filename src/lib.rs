@@ -8,12 +8,13 @@ use core::{mem::MaybeUninit, ops, ptr, slice};
 /// To get pointers to an element T in the array, use [`MaybeArray::nth_ptr`] and
 /// [`MaybeArray::nth_ptr_mut`].
 ///
-/// To read/write to an element, use [`MaybeArray::take`] and [`MaybeArray::set`].
+/// To read/write to an element, use [`MaybeArray::read`] and [`MaybeArray::write`].
 ///
-/// Finally to transforms the MaybeArray into a `[T; N]`, use [`MaybeArray::into_array`]..
+/// Finally to transform the MaybeArray into a `[T; N]`, use [`MaybeArray::into_array`].
 ///
 /// This struct should be used with a warning, since its a verry thin wrapper,
 /// and does not provide `Drop` implementation. Any user is responsible for dropping elements.
+#[repr(transparent)]
 pub struct MaybeArray<T, const N: usize> {
     array: [MaybeUninit<T>; N],
 }
@@ -37,6 +38,7 @@ impl<T, const N: usize> MaybeArray<T, { N }> {
 
     #[cfg(miri)]
     #[inline(always)]
+    /// Returns the capacity of the array.
     pub fn capacity(&self) -> usize {
         self.array.len()
     }
@@ -122,7 +124,7 @@ impl<T, const N: usize> MaybeArray<T, { N }> {
     /// and it's destructor will NOT run.
     ///
     /// # Unsafe
-    /// Marked unsafe because `index` is not boundchecked.
+    /// Marked unsafe because `index` is not boundschecked.
     #[inline(always)]
     pub unsafe fn write(&mut self, offset: usize, value: T) {
         ptr::write(self.nth_ptr_mut(offset), value)
