@@ -5,6 +5,13 @@ use core::{mem::MaybeUninit, ops, ptr, slice};
 
 /// This struct is a simple wrapper around `[MaybeUninit<T>; N]`.
 ///
+/// Because of a bug in const generics, this struct has no `new` or `uninit` method.
+/// Use [`Default::default()`] instead to create one.
+///
+/// The traits `Index` and `IndexMut` are also implemeted, so one can write an expression like:
+/// ```Rust
+/// array[0] = MaybeUninit::new(10)
+/// ```
 /// To get pointers to an element T in the array, use [`MaybeArray::nth_ptr`] and
 /// [`MaybeArray::nth_ptr_mut`].
 ///
@@ -19,10 +26,22 @@ pub struct MaybeArray<T, const N: usize> {
     array: [MaybeUninit<T>; N],
 }
 
+impl<T: Copy, const N: usize> Copy for MaybeArray<T, { N }> {}
+
+impl<T: Copy, const N: usize> Clone for MaybeArray<T, { N }> {
+    fn clone(&self) -> Self {
+        // Not calling [T; N]::clone, we cannot know if we are initialized enough for that.
+        *self
+    }
+}
+
 impl<T, const N: usize> Default for MaybeArray<T, { N }> {
     #[inline(always)]
     fn default() -> Self {
         Self {
+            // We actually create a [MaybeUninit<T>; N] here using *another* MaybeUninit.
+            // It is safe to assume the array is initialized, since a MaybeUninit<T> is always
+            // initialized.
             array: unsafe { MaybeUninit::<_>::uninit().assume_init() },
         }
     }
@@ -113,7 +132,7 @@ impl<T, const N: usize> MaybeArray<T, { N }> {
     /// assert_eq!(array.first_ptr(), array.nth_ptr(0));
     /// ```
     #[inline(always)]
-    pub fn first_ptr(&self) -> *const T {
+    pub const fn first_ptr(&self) -> *const T {
         // Using `array_ptr` here instead of `nth_ptr(0)`,
         // since `array_ptr` does no pointer offsets,
         // and just converts &MaybeArray<T, { N }> to `*const [T; N]`.
@@ -187,13 +206,14 @@ impl<T, const N: usize> MaybeArray<T, { N }> {
     ///
     /// # Examples
     /// ```
+    /// use core::mem::MaybeUninit;
     /// use partialarray::MaybeArray;
     ///
     /// let mut array = MaybeArray::<String, { 10 }>::default();
-    /// unsafe {
-    ///     // The 0th element is initialized.
-    ///     array.write(0, String::from("hello"));
+    /// // The 0th element is initialized.
+    /// array[0] = MaybeUninit::new(String::from("hello"));
     ///     
+    /// unsafe {
     ///     // Reading the 0th element is ok.
     ///     assert_eq!(array.read(0), "hello");
     /// }
@@ -212,15 +232,16 @@ impl<T, const N: usize> MaybeArray<T, { N }> {
     ///
     /// # Examples
     /// ```
+    /// use core::mem::MaybeUninit;
     /// use partialarray::MaybeArray;
     ///
     /// let mut array = MaybeArray::<String, { 2 }>::default();
     ///
-    /// unsafe {
-    ///     for offset in 0..2 {
-    ///         array.write(offset, format!("I am number {}", offset));
-    ///     }
+    /// for offset in 0..2 {
+    ///     array[offset] = MaybeUninit::new(format!("I am number {}", offset));
+    /// }
     ///     
+    /// unsafe {
     ///     let array = MaybeArray::into_array(array);
     ///
     ///     assert_eq!(array, [String::from("I am number 0"), String::from("I am number 1")]);
@@ -237,15 +258,16 @@ impl<T, const N: usize> MaybeArray<T, { N }> {
     ///
     /// # Examples
     /// ```
+    /// use core::mem::MaybeUninit;
     /// use partialarray::MaybeArray;
     ///
     /// let mut array = MaybeArray::<i32, { 3 }>::default();
     ///
-    /// unsafe {
-    ///     for offset in 0..array.capacity() {
-    ///         array.write(offset, offset as i32 + 1);
-    ///     }
+    /// for offset in 0..array.capacity() {
+    ///     array[offset] = MaybeUninit::new(offset as i32 + 1);
+    /// }
     ///
+    /// unsafe {
     ///     let array = MaybeArray::into_array(array);
     ///     assert_eq!(&array, &[1, 2, 3]);
     /// }
@@ -267,15 +289,16 @@ impl<T, const N: usize> MaybeArray<T, { N }> {
     ///
     /// # Examples
     /// ```
+    /// use core::mem::MaybeUninit;
     /// use partialarray::MaybeArray;
     ///
     /// let mut array = MaybeArray::<usize, { 10 }>::default();
-    /// unsafe {
     ///     // Initialize elements 3..6.
-    ///     for offset in 3..6 {
-    ///         array.write(offset, offset);
-    ///     }
+    /// for offset in 3..6 {
+    ///     array[offset] = MaybeUninit::new(offset);
+    /// }
     ///     
+    /// unsafe {
     ///     // This is ok, we get a slice to elements 3, 4 and 5.
     ///     assert_eq!(array.slice_index(3..6), &[3, 4, 5]);
     /// }
@@ -311,15 +334,16 @@ impl<T, const N: usize> MaybeArray<T, { N }> {
     /// 2) The elements contained within the returned slice may be uninitialized, which is UB.
     /// # Examples
     /// ```
+    /// use core::mem::MaybeUninit;
     /// use partialarray::MaybeArray;
     ///
     /// let mut array = MaybeArray::<usize, { 10 }>::default();
-    /// unsafe {
-    ///     // Initialize elements 3..6.
-    ///     for offset in 3..6 {
-    ///         array.write(offset, offset);
-    ///     }
+    /// // Initialize elements 3..6.
+    /// for offset in 3..6 {
+    ///     array[offset] = MaybeUninit::new(offset);
+    /// }
     ///     
+    /// unsafe {
     ///     // This is ok, we get a slice to elements 3, 4 and 5.
     ///     assert_eq!(array.slice_index_mut(3..6), &mut [3, 4, 5]);
     /// }
@@ -348,18 +372,34 @@ impl<T, const N: usize> MaybeArray<T, { N }> {
     }
 }
 
+impl<T, const N: usize> ops::Index<usize> for MaybeArray<T, { N }> {
+    type Output = MaybeUninit<T>;
+
+    #[inline(always)]
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.array[index]
+    }
+}
+
+impl<T, const N: usize> ops::IndexMut<usize> for MaybeArray<T, { N }> {
+    #[inline(always)]
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.array[index]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    use core::mem::MaybeUninit;
+    
     #[test]
     fn maybearray() {
         let mut array = MaybeArray::<i32, { 10 }>::default();
 
-        unsafe {
-            array.write(0, 10);
-            assert_eq!(*(array.first_ptr()), 10)
-        }
+        array[0] = MaybeUninit::new(10);
+
+        unsafe { assert_eq!(*(array.first_ptr()), 10) }
     }
 
     #[test]
@@ -374,11 +414,11 @@ mod tests {
     fn test_slice_index() {
         let mut array = MaybeArray::<i32, { 4 }>::default();
 
-        unsafe {
-            for idx in 0..4 {
-                array.write(idx, (idx as i32 + 1) * 2);
-            }
+        for idx in 0..4 {
+            array[idx] = MaybeUninit::new((idx as i32 + 1) * 2);
+        }
 
+        unsafe {
             let slice = array.slice_index(2..);
             assert_eq!(slice, &[6, 8][..]);
 
@@ -389,4 +429,17 @@ mod tests {
             assert_eq!(slice, &[4, 6]);
         }
     }
+
+    #[test]
+    fn test_read() {
+        let mut array = MaybeArray::<String, { 10 }>::default();
+        // The 0th element is initialized.
+        array[0] = MaybeUninit::new(String::from("hello"));
+        
+        unsafe {
+            // Reading the 0th element is ok.
+            assert_eq!(array.read(0), "hello");
+        }
+    }
+
 }
